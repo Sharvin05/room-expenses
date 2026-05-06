@@ -4,6 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { aedInputToFils } from "@/lib/format/currency";
 import { createExpenseAction } from "@/lib/actions/expenses";
+import type { UserRole } from "@/lib/db/models/User";
+import ExpensesPanel, { type ExpenseItem } from "./ExpensesPanel";
 
 type Group = { id: string; name: string; memberIds: string[] };
 type User = { id: string; name: string };
@@ -18,12 +20,24 @@ function todayIso(): string {
 
 export default function NewExpenseClient({
   currentUserId,
+  role,
   groups,
   users,
+  monthExpenses,
+  selectedYear,
+  selectedMonth,
+  prevMonth,
+  nextMonth,
 }: {
   currentUserId: string;
+  role: UserRole;
   groups: Group[];
   users: User[];
+  monthExpenses: ExpenseItem[];
+  selectedYear: number;
+  selectedMonth: number;
+  prevMonth: { y: number; m: number } | null;
+  nextMonth: { y: number; m: number } | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -228,6 +242,18 @@ export default function NewExpenseClient({
           </button>
         </div>
       </div>
+
+      <ExpensesPanel
+        currentUserId={currentUserId}
+        role={role}
+        members={users}
+        groups={groups}
+        expenses={monthExpenses}
+        selectedYear={selectedYear}
+        selectedMonth={selectedMonth}
+        prevMonth={prevMonth}
+        nextMonth={nextMonth}
+      />
     </div>
   );
 }

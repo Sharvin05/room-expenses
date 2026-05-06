@@ -32,7 +32,7 @@ const expenseSchema = z
 
 export type ExpenseResult = { ok: true; id: string } | { ok: false; error: string };
 
-export async function createExpenseAction(input: {
+type ExpenseInput = {
   amountFils: number;
   shopName: string;
   date: string;
@@ -40,37 +40,32 @@ export async function createExpenseAction(input: {
   groupId?: string;
   participantIds?: string[];
   includeSelf: boolean;
-}): Promise<ExpenseResult> {
-  const session = await requireUser();
-  if (!session.roomId) return { ok: false, error: "User missing room" };
+};
 
-  const parsed = expenseSchema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
-  }
-
-  await connectDb();
-
+async function resolveParticipants(
+  data: ReturnType<typeof expenseSchema.parse>,
+  roomId: string,
+  payerObjectId: Types.ObjectId,
+): Promise<{ ok: true; participantIds: Types.ObjectId[]; groupId: Types.ObjectId | null } | { ok: false; error: string }> {
   let participantIds: Types.ObjectId[] = [];
   let groupId: Types.ObjectId | null = null;
 
-  if (parsed.data.mode === "group") {
-    const group = await Group.findById(parsed.data.groupId);
+  if (data.mode === "group") {
+    const group = await Group.findById(data.groupId);
     if (!group) return { ok: false, error: "Group not found" };
-    if (group.roomId.toString() !== session.roomId) return { ok: false, error: "Forbidden" };
+    if (group.roomId.toString() !== roomId) return { ok: false, error: "Forbidden" };
     groupId = group._id;
     participantIds = [...group.memberIds];
   } else {
-    participantIds = parsed.data.participantIds!.map((id) => new Types.ObjectId(id));
+    participantIds = data.participantIds!.map((id) => new Types.ObjectId(id));
     const valid = await User.countDocuments({
       _id: { $in: participantIds },
-      roomId: new Types.ObjectId(session.roomId),
+      roomId: new Types.ObjectId(roomId),
     });
     if (valid !== participantIds.length) return { ok: false, error: "Invalid participants" };
   }
 
-  const payerObjectId = new Types.ObjectId(session.sub);
-  if (parsed.data.includeSelf) {
+  if (data.includeSelf) {
     if (!participantIds.some((id) => id.equals(payerObjectId))) {
       participantIds.push(payerObjectId);
     }
@@ -82,6 +77,31 @@ export async function createExpenseAction(input: {
     return { ok: false, error: "Need at least one participant" };
   }
 
+  return { ok: true, participantIds, groupId };
+}
+
+function revalidateExpenseSurfaces() {
+  revalidatePath("/dashboard");
+  revalidatePath("/expenses/new");
+  revalidatePath("/expenses/month");
+  revalidatePath("/expenses/history");
+}
+
+export async function createExpenseAction(input: ExpenseInput): Promise<ExpenseResult> {
+  const session = await requireUser();
+  if (!session.roomId) return { ok: false, error: "User missing room" };
+
+  const parsed = expenseSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  await connectDb();
+
+  const payerObjectId = new Types.ObjectId(session.sub);
+  const resolved = await resolveParticipants(parsed.data, session.roomId, payerObjectId);
+  if (!resolved.ok) return resolved;
+
   const date = new Date(parsed.data.date);
   if (Number.isNaN(date.getTime())) return { ok: false, error: "Invalid date" };
 
@@ -90,17 +110,56 @@ export async function createExpenseAction(input: {
     shopName: parsed.data.shopName,
     roomId: new Types.ObjectId(session.roomId),
     payerId: payerObjectId,
-    participantIds,
-    groupId,
+    participantIds: resolved.participantIds,
+    groupId: resolved.groupId,
     date,
     year: date.getFullYear(),
     month: date.getMonth() + 1,
   });
 
-  revalidatePath("/dashboard");
-  revalidatePath("/expenses/month");
-  revalidatePath("/expenses/history");
+  revalidateExpenseSurfaces();
   return { ok: true, id: expense._id.toString() };
+}
+
+export async function updateExpenseAction(
+  expenseId: string,
+  input: ExpenseInput,
+): Promise<ExpenseResult> {
+  const session = await requireUser();
+  if (!session.roomId) return { ok: false, error: "User missing room" };
+  if (!Types.ObjectId.isValid(expenseId)) return { ok: false, error: "invalid id" };
+
+  const parsed = expenseSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  await connectDb();
+  const exp = await Expense.findById(expenseId);
+  if (!exp) return { ok: false, error: "Not found" };
+  if (exp.roomId.toString() !== session.roomId) return { ok: false, error: "Forbidden" };
+
+  const isPayer = exp.payerId.toString() === session.sub;
+  const isAdmin = session.role === "owner" || session.role === "roomAdmin";
+  if (!isPayer && !isAdmin) return { ok: false, error: "Forbidden" };
+
+  const resolved = await resolveParticipants(parsed.data, session.roomId, exp.payerId);
+  if (!resolved.ok) return resolved;
+
+  const date = new Date(parsed.data.date);
+  if (Number.isNaN(date.getTime())) return { ok: false, error: "Invalid date" };
+
+  exp.amount = parsed.data.amountFils;
+  exp.shopName = parsed.data.shopName;
+  exp.participantIds = resolved.participantIds;
+  exp.groupId = resolved.groupId;
+  exp.date = date;
+  exp.year = date.getFullYear();
+  exp.month = date.getMonth() + 1;
+  await exp.save();
+
+  revalidateExpenseSurfaces();
+  return { ok: true, id: exp._id.toString() };
 }
 
 export async function deleteExpenseAction(expenseId: string): Promise<ExpenseResult> {
@@ -117,8 +176,6 @@ export async function deleteExpenseAction(expenseId: string): Promise<ExpenseRes
   if (!isPayer && !isAdmin) return { ok: false, error: "Forbidden" };
 
   await Expense.deleteOne({ _id: exp._id });
-  revalidatePath("/dashboard");
-  revalidatePath("/expenses/month");
-  revalidatePath("/expenses/history");
+  revalidateExpenseSurfaces();
   return { ok: true, id: expenseId };
 }
