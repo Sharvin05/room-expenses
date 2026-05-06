@@ -30,7 +30,7 @@ export default async function HistoryPage() {
             {buckets.map((b) => (
               <li key={`${b.year}-${b.month}`}>
                 <Link
-                  href={`/expenses/month?y=${b.year}&m=${b.month}`}
+                  href={`/dashboard?y=${b.year}&m=${b.month}`}
                   className="flex items-center justify-between px-5 py-4 hover:bg-surface-muted"
                 >
                   <div>

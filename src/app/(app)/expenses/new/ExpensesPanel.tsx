@@ -424,14 +424,16 @@ function ExpenseEditForm({
         </fieldset>
       )}
 
-      <label className="inline-flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={includePayer}
-          onChange={(e) => setIncludePayer(e.target.checked)}
-        />
-        Include {payerName} in the split
-      </label>
+      {mode === "individuals" ? (
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={includePayer}
+            onChange={(e) => setIncludePayer(e.target.checked)}
+          />
+          Include {payerName} in the split
+        </label>
+      ) : null}
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 

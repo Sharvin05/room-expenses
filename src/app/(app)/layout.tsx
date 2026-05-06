@@ -18,7 +18,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const navItems: NavItem[] = [
     { href: "/dashboard", label: "Dashboard" },
     { href: "/expenses/new", label: "Add expense" },
-    { href: "/expenses/month", label: "This month" },
     { href: "/expenses/history", label: "History" },
   ];
   if (session.role !== "user") {

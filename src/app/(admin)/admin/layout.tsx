@@ -19,7 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   navItems.push(
     { href: "/admin/users", label: "Users" },
     { href: "/admin/groups", label: "Groups" },
-    { href: "/expenses/month", label: "Expenses" },
+    { href: "/dashboard", label: "Dashboard" },
   );
 
   return (
@@ -27,7 +27,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <AppHeader
         homeHref="/admin"
         brand={room?.name ?? "Room Expenses"}
-        tag="Admin"
         navItems={navItems}
         userName={me?.name ?? session.sub}
       />

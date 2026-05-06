@@ -8,7 +8,8 @@
       "Bash(curl -sS -o /dev/null -w \"GET /  -> %{http_code} -> %{redirect_url}\\\\n\" http://localhost:3000/)",
       "Bash(curl -sS -o /dev/null -w \"GET /login  -> %{http_code}\\\\n\" http://localhost:3000/login)",
       "Bash(curl -sS -o /dev/null -w \"GET /dashboard  -> %{http_code} -> %{redirect_url}\\\\n\" http://localhost:3000/dashboard)",
-      "Bash(curl -sS -X POST -H 'Content-Type: application/json' -d '{\"email\":\"andrews@room.com\",\"password\":\"SharvinDev!\"}' -i http://localhost:3000/api/auth/login)"
+      "Bash(curl -sS -X POST -H 'Content-Type: application/json' -d '{\"email\":\"andrews@room.com\",\"password\":\"SharvinDev!\"}' -i http://localhost:3000/api/auth/login)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

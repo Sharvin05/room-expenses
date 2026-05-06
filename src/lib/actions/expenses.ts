@@ -8,6 +8,7 @@ import { Expense } from "@/lib/db/models/Expense";
 import { Group } from "@/lib/db/models/Group";
 import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
+import { recomputeMonthlyBill } from "@/lib/money/bills";
 
 const objectId = z.string().refine((v) => Types.ObjectId.isValid(v), { message: "invalid id" });
 
@@ -63,14 +64,14 @@ async function resolveParticipants(
       roomId: new Types.ObjectId(roomId),
     });
     if (valid !== participantIds.length) return { ok: false, error: "Invalid participants" };
-  }
 
-  if (data.includeSelf) {
-    if (!participantIds.some((id) => id.equals(payerObjectId))) {
-      participantIds.push(payerObjectId);
+    if (data.includeSelf) {
+      if (!participantIds.some((id) => id.equals(payerObjectId))) {
+        participantIds.push(payerObjectId);
+      }
+    } else {
+      participantIds = participantIds.filter((id) => !id.equals(payerObjectId));
     }
-  } else {
-    participantIds = participantIds.filter((id) => !id.equals(payerObjectId));
   }
 
   if (participantIds.length === 0) {
@@ -83,7 +84,6 @@ async function resolveParticipants(
 function revalidateExpenseSurfaces() {
   revalidatePath("/dashboard");
   revalidatePath("/expenses/new");
-  revalidatePath("/expenses/month");
   revalidatePath("/expenses/history");
 }
 
@@ -117,6 +117,7 @@ export async function createExpenseAction(input: ExpenseInput): Promise<ExpenseR
     month: date.getMonth() + 1,
   });
 
+  await recomputeMonthlyBill(session.roomId, date.getFullYear(), date.getMonth() + 1);
   revalidateExpenseSurfaces();
   return { ok: true, id: expense._id.toString() };
 }
@@ -149,6 +150,9 @@ export async function updateExpenseAction(
   const date = new Date(parsed.data.date);
   if (Number.isNaN(date.getTime())) return { ok: false, error: "Invalid date" };
 
+  const oldYear = exp.year;
+  const oldMonth = exp.month;
+
   exp.amount = parsed.data.amountFils;
   exp.shopName = parsed.data.shopName;
   exp.participantIds = resolved.participantIds;
@@ -158,6 +162,10 @@ export async function updateExpenseAction(
   exp.month = date.getMonth() + 1;
   await exp.save();
 
+  await recomputeMonthlyBill(session.roomId, exp.year, exp.month);
+  if (oldYear !== exp.year || oldMonth !== exp.month) {
+    await recomputeMonthlyBill(session.roomId, oldYear, oldMonth);
+  }
   revalidateExpenseSurfaces();
   return { ok: true, id: exp._id.toString() };
 }
@@ -175,7 +183,11 @@ export async function deleteExpenseAction(expenseId: string): Promise<ExpenseRes
   const isAdmin = session.role === "owner" || session.role === "roomAdmin";
   if (!isPayer && !isAdmin) return { ok: false, error: "Forbidden" };
 
+  const { year: deletedYear, month: deletedMonth } = exp;
   await Expense.deleteOne({ _id: exp._id });
+  if (session.roomId) {
+    await recomputeMonthlyBill(session.roomId, deletedYear, deletedMonth);
+  }
   revalidateExpenseSurfaces();
   return { ok: true, id: expenseId };
 }

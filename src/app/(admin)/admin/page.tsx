@@ -25,7 +25,7 @@ export default async function AdminHome() {
     isOwner ? { label: "Rooms", value: rooms, href: "/admin/rooms" } : null,
     { label: "Users", value: users, href: "/admin/users" },
     { label: "Groups", value: groups, href: "/admin/groups" },
-    { label: "Expenses", value: expenses, href: "/expenses/month" },
+    { label: "Expenses", value: expenses, href: "/dashboard" },
   ].filter(Boolean) as { label: string; value: number; href: string }[];
 
   return (

@@ -90,7 +90,7 @@ export default function NewExpenseClient({
         setError(result.error);
         return;
       }
-      router.push("/dashboard");
+      // router.push("/dashboard");
       router.refresh();
     });
   }
@@ -220,14 +220,16 @@ export default function NewExpenseClient({
           )}
         </div>
 
-        <label className="mt-4 inline-flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={includeSelf}
-            onChange={(e) => setIncludeSelf(e.target.checked)}
-          />
-          Include me in the split
-        </label>
+        {mode === "individuals" ? (
+          <label className="mt-4 inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeSelf}
+              onChange={(e) => setIncludeSelf(e.target.checked)}
+            />
+            Include me in the split
+          </label>
+        ) : null}
 
         {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
 
