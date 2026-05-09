@@ -6,7 +6,9 @@ import { Group } from "@/lib/db/models/Group";
 import { requireUser } from "@/lib/auth/session";
 import { currentYearMonth, listExpenses } from "@/lib/money/reports";
 import { getOrComputeBillView, resolveBillSettlements } from "@/lib/money/bills";
+import { computeUserOverallBalance, listUserTransfers } from "@/lib/money/overall";
 import MonthView from "@/components/MonthView";
+import OverallSummaryPanel from "@/components/OverallSummaryPanel";
 
 export default async function DashboardPage({
   searchParams,
@@ -24,12 +26,15 @@ export default async function DashboardPage({
 
   const roomId = new Types.ObjectId(session.roomId);
   const bill = await getOrComputeBillView(session.roomId, year, month);
-  const [expenses, users, groups, settlementRows] = await Promise.all([
-    listExpenses(session.roomId, { year, month }),
-    User.find({ roomId }).select("name").lean(),
-    Group.find({ roomId }).select("name").lean(),
-    resolveBillSettlements(bill.id),
-  ]);
+  const [expenses, users, groups, settlementRows, overallBalance, recentTransfers] =
+    await Promise.all([
+      listExpenses(session.roomId, { year, month }),
+      User.find({ roomId }).select("name").lean(),
+      Group.find({ roomId }).select("name").lean(),
+      resolveBillSettlements(bill.id),
+      computeUserOverallBalance(session.roomId, session.sub),
+      listUserTransfers(session.roomId, session.sub, { limit: 5 }),
+    ]);
 
   const userNameById = new Map(users.map((u) => [u._id.toString(), u.name]));
   const groupNameById = new Map(groups.map((g) => [g._id.toString(), g.name]));
@@ -68,20 +73,28 @@ export default async function DashboardPage({
       : { y: year, m: month + 1 };
 
   return (
-    <MonthView
-      year={year}
-      month={month}
-      expenses={expenses}
-      userNameById={userNameById}
-      groupNameById={groupNameById}
-      personalSummary={personalSummary}
-      prevMonth={prevMonth}
-      nextMonth={nextMonth}
-      perPayer={perPayer}
-      perShare={perShare}
-      billId={bill.id}
-      settlementRows={settlementRows}
-      currentUserId={session.sub}
-    />
+    <div className="flex flex-col gap-8">
+      <OverallSummaryPanel
+        balance={overallBalance}
+        recentTransfers={recentTransfers}
+        userNameById={userNameById}
+        currentUserId={session.sub}
+      />
+      <MonthView
+        year={year}
+        month={month}
+        expenses={expenses}
+        userNameById={userNameById}
+        groupNameById={groupNameById}
+        personalSummary={personalSummary}
+        prevMonth={prevMonth}
+        nextMonth={nextMonth}
+        perPayer={perPayer}
+        perShare={perShare}
+        billId={bill.id}
+        settlementRows={settlementRows}
+        currentUserId={session.sub}
+      />
+    </div>
   );
 }

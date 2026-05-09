@@ -61,6 +61,7 @@ export async function recordTransferAction(input: {
   });
 
   revalidatePath("/dashboard");
+  revalidatePath("/transactions");
   return { ok: true, id: transfer._id.toString() };
 }
 
@@ -84,6 +85,7 @@ export async function confirmTransferAction(transferId: string): Promise<Transfe
   await t.save();
 
   revalidatePath("/dashboard");
+  revalidatePath("/transactions");
   return { ok: true, id: transferId };
 }
 
@@ -107,6 +109,7 @@ export async function rejectTransferAction(transferId: string): Promise<Transfer
   await t.save();
 
   revalidatePath("/dashboard");
+  revalidatePath("/transactions");
   return { ok: true, id: transferId };
 }
 
@@ -127,5 +130,6 @@ export async function cancelTransferAction(transferId: string): Promise<Transfer
   await Transfer.deleteOne({ _id: t._id });
 
   revalidatePath("/dashboard");
+  revalidatePath("/transactions");
   return { ok: true, id: transferId };
 }

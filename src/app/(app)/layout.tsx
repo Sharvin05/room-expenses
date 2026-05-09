@@ -19,6 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/dashboard", label: "Dashboard" },
     { href: "/expenses/new", label: "Add expense" },
     { href: "/expenses/history", label: "History" },
+    { href: "/transactions", label: "Transactions" },
   ];
   if (session.role !== "user") {
     navItems.push({ href: "/admin", label: "Admin" });
