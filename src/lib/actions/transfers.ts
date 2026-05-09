@@ -7,7 +7,6 @@ import { connectDb } from "@/lib/db/connect";
 import { Transfer } from "@/lib/db/models/Transfer";
 import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
-import { getOrComputeBillView } from "@/lib/money/bills";
 import { currentYearMonth } from "@/lib/money/reports";
 
 const objectId = z.string().refine((v) => Types.ObjectId.isValid(v), { message: "invalid id" });
@@ -45,11 +44,11 @@ export async function recordOverallTransferAction(input: {
   }
 
   const { year, month } = currentYearMonth();
-  const bill = await getOrComputeBillView(session.roomId, year, month);
 
   const transfer = await Transfer.create({
     roomId: new Types.ObjectId(session.roomId),
-    billId: new Types.ObjectId(bill.id),
+    year,
+    month,
     fromUserId: new Types.ObjectId(session.sub),
     toUserId: new Types.ObjectId(parsed.data.toUserId),
     amount: parsed.data.amount,
@@ -60,7 +59,6 @@ export async function recordOverallTransferAction(input: {
   });
 
   revalidatePath("/dashboard");
-  revalidatePath("/transactions");
   return { ok: true, id: transfer._id.toString() };
 }
 
@@ -84,7 +82,6 @@ export async function confirmTransferAction(transferId: string): Promise<Transfe
   await t.save();
 
   revalidatePath("/dashboard");
-  revalidatePath("/transactions");
   return { ok: true, id: transferId };
 }
 
@@ -108,7 +105,6 @@ export async function rejectTransferAction(transferId: string): Promise<Transfer
   await t.save();
 
   revalidatePath("/dashboard");
-  revalidatePath("/transactions");
   return { ok: true, id: transferId };
 }
 
@@ -129,6 +125,5 @@ export async function cancelTransferAction(transferId: string): Promise<Transfer
   await Transfer.deleteOne({ _id: t._id });
 
   revalidatePath("/dashboard");
-  revalidatePath("/transactions");
   return { ok: true, id: transferId };
 }

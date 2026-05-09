@@ -90,7 +90,13 @@ export default function NewExpenseClient({
         setError(result.error);
         return;
       }
-      // router.push("/dashboard");
+      setAmount("");
+      setShopName("");
+      setDate(todayIso());
+      setMode(groups.length ? "group" : "individuals");
+      setGroupId(groups[0]?.id ?? "");
+      setParticipantIds([]);
+      setIncludeSelf(true);
       router.refresh();
     });
   }

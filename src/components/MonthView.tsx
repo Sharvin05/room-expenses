@@ -124,7 +124,7 @@ export default function MonthView({
         </div>
       </section>
 
-      <SettleUpPanel settlements={settlements} userNameById={userNameRecord} />
+      {/* <SettleUpPanel settlements={settlements} userNameById={userNameRecord} /> */}
 
       <section className="rounded-2xl border border-border bg-surface">
         <header className="border-b border-border px-5 py-3 text-sm font-medium">All expenses</header>

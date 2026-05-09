@@ -5,7 +5,7 @@ import { User } from "@/lib/db/models/User";
 import { Group } from "@/lib/db/models/Group";
 import { requireUser } from "@/lib/auth/session";
 import { currentYearMonth, listExpenses } from "@/lib/money/reports";
-import { getOrComputeBillView } from "@/lib/money/bills";
+import { computeMonthBillView } from "@/lib/money/bills";
 import { computeUserOverallBalance, listUserTransfers } from "@/lib/money/overall";
 import MonthView from "@/components/MonthView";
 import OverallSummaryPanel from "@/components/OverallSummaryPanel";
@@ -25,7 +25,7 @@ export default async function DashboardPage({
   const month = Number(sp.m) || now.month;
 
   const roomId = new Types.ObjectId(session.roomId);
-  const bill = await getOrComputeBillView(session.roomId, year, month);
+  const bill = await computeMonthBillView(session.roomId, year, month);
   const [expenses, users, groups, overallBalance, recentTransfers] = await Promise.all([
     listExpenses(session.roomId, { year, month }),
     User.find({ roomId }).select("name").lean(),
@@ -70,14 +70,18 @@ export default async function DashboardPage({
       ? { y: year + 1, m: 1 }
       : { y: year, m: month + 1 };
 
+
+
+      //   <OverallSummaryPanel
+      //   balance={overallBalance}
+      //   recentTransfers={recentTransfers}
+      //   userNameById={userNameById}
+      //   currentUserId={session.sub}
+      // />
+
   return (
     <div className="flex flex-col gap-8">
-      <OverallSummaryPanel
-        balance={overallBalance}
-        recentTransfers={recentTransfers}
-        userNameById={userNameById}
-        currentUserId={session.sub}
-      />
+    
       <MonthView
         year={year}
         month={month}

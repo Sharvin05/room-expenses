@@ -1,6 +1,5 @@
-import { Types } from "mongoose";
 import { connectDb } from "@/lib/db/connect";
-import { MonthlyBill, type MonthlyBillDoc } from "@/lib/db/models/MonthlyBill";
+import { Transfer } from "@/lib/db/models/Transfer";
 import { listExpenses, shareTotalsByUser } from "@/lib/money/reports";
 
 export type SettlementTransfer = {
@@ -10,8 +9,6 @@ export type SettlementTransfer = {
 };
 
 export type BillView = {
-  id: string;
-  roomId: string;
   year: number;
   month: number;
   totalAmount: number;
@@ -19,7 +16,6 @@ export type BillView = {
   perUserSpent: { userId: string; amount: number }[];
   perUserShare: { userId: string; amount: number }[];
   settlements: SettlementTransfer[];
-  recomputedAt: Date;
 };
 
 export function computeSettlements(
@@ -55,38 +51,19 @@ export function computeSettlements(
   return transfers;
 }
 
-function toView(doc: MonthlyBillDoc): BillView {
-  return {
-    id: doc._id.toString(),
-    roomId: doc.roomId.toString(),
-    year: doc.year,
-    month: doc.month,
-    totalAmount: doc.totalAmount,
-    expenseCount: doc.expenseCount,
-    perUserSpent: doc.perUserSpent.map((r) => ({
-      userId: r.userId.toString(),
-      amount: r.amount,
-    })),
-    perUserShare: doc.perUserShare.map((r) => ({
-      userId: r.userId.toString(),
-      amount: r.amount,
-    })),
-    settlements: doc.settlements.map((s) => ({
-      fromUserId: s.fromUserId.toString(),
-      toUserId: s.toUserId.toString(),
-      amount: s.amount,
-    })),
-    recomputedAt: doc.recomputedAt,
-  };
-}
-
-export async function recomputeMonthlyBill(
+export async function computeMonthBillView(
   roomId: string,
   year: number,
   month: number,
 ): Promise<BillView> {
   await connectDb();
-  const expenses = await listExpenses(roomId, { year, month });
+
+  const [expenses, confirmedTransfers] = await Promise.all([
+    listExpenses(roomId, { year, month }),
+    Transfer.find({ roomId, year, month, status: "confirmed" })
+      .select("fromUserId toUserId amount")
+      .lean(),
+  ]);
 
   const perUserSpentMap = new Map<string, number>();
   for (const e of expenses) {
@@ -102,50 +79,23 @@ export async function recomputeMonthlyBill(
   for (const r of perShareRows) {
     netByUser.set(r.userId, (netByUser.get(r.userId) ?? 0) - r.share);
   }
+  for (const t of confirmedTransfers) {
+    const from = t.fromUserId.toString();
+    const to = t.toUserId.toString();
+    netByUser.set(from, (netByUser.get(from) ?? 0) + t.amount);
+    netByUser.set(to, (netByUser.get(to) ?? 0) - t.amount);
+  }
 
   const settlements = computeSettlements(netByUser);
   const totalAmount = expenses.reduce((s, e) => s + e.amount, 0);
 
-  const doc = await MonthlyBill.findOneAndUpdate(
-    { roomId: new Types.ObjectId(roomId), year, month },
-    {
-      $set: {
-        totalAmount,
-        expenseCount: expenses.length,
-        perUserSpent: Array.from(perUserSpentMap, ([userId, amount]) => ({
-          userId: new Types.ObjectId(userId),
-          amount,
-        })),
-        perUserShare: perShareRows.map((r) => ({
-          userId: new Types.ObjectId(r.userId),
-          amount: r.share,
-        })),
-        settlements: settlements.map((s) => ({
-          fromUserId: new Types.ObjectId(s.fromUserId),
-          toUserId: new Types.ObjectId(s.toUserId),
-          amount: s.amount,
-        })),
-        recomputedAt: new Date(),
-      },
-    },
-    { upsert: true, new: true },
-  );
-
-  return toView(doc!);
-}
-
-export async function getOrComputeBillView(
-  roomId: string,
-  year: number,
-  month: number,
-): Promise<BillView> {
-  await connectDb();
-  const existing = await MonthlyBill.findOne({
-    roomId: new Types.ObjectId(roomId),
+  return {
     year,
     month,
-  });
-  if (existing) return toView(existing);
-  return recomputeMonthlyBill(roomId, year, month);
+    totalAmount,
+    expenseCount: expenses.length,
+    perUserSpent: Array.from(perUserSpentMap, ([userId, amount]) => ({ userId, amount })),
+    perUserShare: perShareRows.map((r) => ({ userId: r.userId, amount: r.share })),
+    settlements,
+  };
 }
-

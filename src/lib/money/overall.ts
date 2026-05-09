@@ -1,7 +1,8 @@
 import { Types } from "mongoose";
 import { connectDb } from "@/lib/db/connect";
-import { MonthlyBill } from "@/lib/db/models/MonthlyBill";
+import { Expense } from "@/lib/db/models/Expense";
 import { Transfer, type TransferStatus } from "@/lib/db/models/Transfer";
+import { computeMonthBillView } from "@/lib/money/bills";
 
 export type TransferLite = {
   id: string;
@@ -32,6 +33,31 @@ export type OverallBalance = {
 
 const pairKey = (from: string, to: string) => `${from}|${to}`;
 
+async function listActiveMonths(
+  roomObjectId: Types.ObjectId,
+): Promise<{ year: number; month: number }[]> {
+  const [expenseMonths, transferMonths] = await Promise.all([
+    Expense.aggregate<{ _id: { y: number; m: number } }>([
+      { $match: { roomId: roomObjectId } },
+      { $group: { _id: { y: "$year", m: "$month" } } },
+    ]),
+    Transfer.aggregate<{ _id: { y: number; m: number } }>([
+      { $match: { roomId: roomObjectId, status: "confirmed" } },
+      { $group: { _id: { y: "$year", m: "$month" } } },
+    ]),
+  ]);
+
+  const seen = new Set<string>();
+  const out: { year: number; month: number }[] = [];
+  for (const r of [...expenseMonths, ...transferMonths]) {
+    const key = `${r._id.y}-${r._id.m}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ year: r._id.y, month: r._id.m });
+  }
+  return out;
+}
+
 export async function computeUserOverallBalance(
   roomId: string,
   userId: string,
@@ -40,8 +66,10 @@ export async function computeUserOverallBalance(
   const roomObjectId = new Types.ObjectId(roomId);
   const userObjectId = new Types.ObjectId(userId);
 
+  const months = await listActiveMonths(roomObjectId);
+
   const [bills, confirmed, pending] = await Promise.all([
-    MonthlyBill.find({ roomId: roomObjectId }).select("settlements").lean(),
+    Promise.all(months.map((m) => computeMonthBillView(roomId, m.year, m.month))),
     Transfer.find({ roomId: roomObjectId, status: "confirmed" })
       .select("fromUserId toUserId amount")
       .lean(),
@@ -57,15 +85,18 @@ export async function computeUserOverallBalance(
   const owed = new Map<string, number>();
   for (const bill of bills) {
     for (const s of bill.settlements) {
-      const k = pairKey(s.fromUserId.toString(), s.toUserId.toString());
+      const k = pairKey(s.fromUserId, s.toUserId);
       owed.set(k, (owed.get(k) ?? 0) + s.amount);
     }
   }
 
   const paid = new Map<string, number>();
+  let totalPaidByMe = 0;
   for (const t of confirmed) {
-    const k = pairKey(t.fromUserId.toString(), t.toUserId.toString());
-    paid.set(k, (paid.get(k) ?? 0) + t.amount);
+    const from = t.fromUserId.toString();
+    const to = t.toUserId.toString();
+    paid.set(pairKey(from, to), (paid.get(pairKey(from, to)) ?? 0) + t.amount);
+    if (from === userId) totalPaidByMe += t.amount;
   }
 
   const pendingByCounterpart = new Map<string, TransferLite[]>();
@@ -103,16 +134,13 @@ export async function computeUserOverallBalance(
 
   const youOwe: CounterpartSummary[] = [];
   const owedToYou: CounterpartSummary[] = [];
-  let totalPaidByMe = 0;
 
   for (const other of counterparts) {
     const grossIOwe = owed.get(pairKey(userId, other)) ?? 0;
     const grossTheyOwe = owed.get(pairKey(other, userId)) ?? 0;
     const paidByMe = paid.get(pairKey(userId, other)) ?? 0;
     const paidByThem = paid.get(pairKey(other, userId)) ?? 0;
-    const netIOwe = grossIOwe - grossTheyOwe - paidByMe + paidByThem;
-
-    totalPaidByMe += paidByMe;
+    const netIOwe = grossIOwe - grossTheyOwe;
 
     const summary: CounterpartSummary = {
       userId: other,
@@ -176,34 +204,21 @@ export async function listUserTransfers(
     $or: [{ fromUserId: userObjectId }, { toUserId: userObjectId }],
   })
     .sort({ resolvedAt: -1, declaredAt: -1 })
-    .select("billId fromUserId toUserId amount note declaredAt resolvedAt");
+    .select("year month fromUserId toUserId amount note declaredAt resolvedAt");
 
   if (opts.limit !== undefined) query.limit(opts.limit);
 
   const transfers = await query.lean();
-  if (transfers.length === 0) return [];
 
-  const billIds = Array.from(new Set(transfers.map((t) => t.billId.toString())));
-  const bills = await MonthlyBill.find({
-    _id: { $in: billIds.map((id) => new Types.ObjectId(id)) },
-  })
-    .select("year month")
-    .lean();
-
-  const billMap = new Map(bills.map((b) => [b._id.toString(), { year: b.year, month: b.month }]));
-
-  return transfers.map((t) => {
-    const bill = billMap.get(t.billId.toString());
-    return {
-      id: t._id.toString(),
-      fromUserId: t.fromUserId.toString(),
-      toUserId: t.toUserId.toString(),
-      amount: t.amount,
-      note: t.note ?? "",
-      declaredAt: t.declaredAt,
-      resolvedAt: t.resolvedAt ?? null,
-      year: bill?.year ?? 0,
-      month: bill?.month ?? 0,
-    };
-  });
+  return transfers.map((t) => ({
+    id: t._id.toString(),
+    fromUserId: t.fromUserId.toString(),
+    toUserId: t.toUserId.toString(),
+    amount: t.amount,
+    note: t.note ?? "",
+    declaredAt: t.declaredAt,
+    resolvedAt: t.resolvedAt ?? null,
+    year: t.year,
+    month: t.month,
+  }));
 }

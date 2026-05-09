@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { aedInputToFils, filsToAed } from "@/lib/format/currency";
 import {
   cancelTransferAction,
@@ -73,12 +72,6 @@ export default function OverallSummaryPanel({
       <div className="border-t border-border">
         <header className="flex items-center justify-between px-5 py-3">
           <h3 className="text-sm font-medium">Recent transactions</h3>
-          <Link
-            href="/transactions"
-            className="text-xs text-muted underline-offset-4 hover:text-foreground hover:underline"
-          >
-            View all transactions →
-          </Link>
         </header>
         {recentTransfers.length === 0 ? (
           <p className="px-5 pb-5 text-sm text-muted">No payments recorded yet.</p>
