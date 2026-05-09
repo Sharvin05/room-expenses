@@ -5,7 +5,7 @@ import { User } from "@/lib/db/models/User";
 import { Group } from "@/lib/db/models/Group";
 import { requireUser } from "@/lib/auth/session";
 import { currentYearMonth, listExpenses } from "@/lib/money/reports";
-import { getOrComputeBillView, resolveBillSettlements } from "@/lib/money/bills";
+import { getOrComputeBillView } from "@/lib/money/bills";
 import { computeUserOverallBalance, listUserTransfers } from "@/lib/money/overall";
 import MonthView from "@/components/MonthView";
 import OverallSummaryPanel from "@/components/OverallSummaryPanel";
@@ -26,15 +26,13 @@ export default async function DashboardPage({
 
   const roomId = new Types.ObjectId(session.roomId);
   const bill = await getOrComputeBillView(session.roomId, year, month);
-  const [expenses, users, groups, settlementRows, overallBalance, recentTransfers] =
-    await Promise.all([
-      listExpenses(session.roomId, { year, month }),
-      User.find({ roomId }).select("name").lean(),
-      Group.find({ roomId }).select("name").lean(),
-      resolveBillSettlements(bill.id),
-      computeUserOverallBalance(session.roomId, session.sub),
-      listUserTransfers(session.roomId, session.sub, { limit: 5 }),
-    ]);
+  const [expenses, users, groups, overallBalance, recentTransfers] = await Promise.all([
+    listExpenses(session.roomId, { year, month }),
+    User.find({ roomId }).select("name").lean(),
+    Group.find({ roomId }).select("name").lean(),
+    computeUserOverallBalance(session.roomId, session.sub),
+    listUserTransfers(session.roomId, session.sub, { limit: 5 }),
+  ]);
 
   const userNameById = new Map(users.map((u) => [u._id.toString(), u.name]));
   const groupNameById = new Map(groups.map((g) => [g._id.toString(), g.name]));
@@ -91,9 +89,7 @@ export default async function DashboardPage({
         nextMonth={nextMonth}
         perPayer={perPayer}
         perShare={perShare}
-        billId={bill.id}
-        settlementRows={settlementRows}
-        currentUserId={session.sub}
+        settlements={bill.settlements}
       />
     </div>
   );

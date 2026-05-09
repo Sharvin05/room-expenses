@@ -1,7 +1,6 @@
 import { Types } from "mongoose";
 import { connectDb } from "@/lib/db/connect";
 import { MonthlyBill, type MonthlyBillDoc } from "@/lib/db/models/MonthlyBill";
-import { Transfer, type TransferStatus } from "@/lib/db/models/Transfer";
 import { listExpenses, shareTotalsByUser } from "@/lib/money/reports";
 
 export type SettlementTransfer = {
@@ -150,89 +149,3 @@ export async function getOrComputeBillView(
   return recomputeMonthlyBill(roomId, year, month);
 }
 
-export type TransferLite = {
-  id: string;
-  fromUserId: string;
-  toUserId: string;
-  amount: number;
-  status: TransferStatus;
-  note: string;
-  declaredAt: Date;
-  resolvedAt: Date | null;
-};
-
-export type SettlementRow = {
-  fromUserId: string;
-  toUserId: string;
-  owedAmount: number;
-  paidAmount: number;
-  pendingAmount: number;
-  outstandingAmount: number;
-  settled: boolean;
-  overpaid: boolean;
-  pendingTransfers: TransferLite[];
-  confirmedTransfers: TransferLite[];
-};
-
-export async function resolveBillSettlements(billId: string): Promise<SettlementRow[]> {
-  if (!Types.ObjectId.isValid(billId)) return [];
-  await connectDb();
-  const bill = await MonthlyBill.findById(billId);
-  if (!bill) return [];
-
-  const transfers = await Transfer.find({
-    billId: bill._id,
-    status: { $in: ["pending", "confirmed"] },
-  }).lean();
-
-  return bill.settlements.map((s) => {
-    const fromId = s.fromUserId.toString();
-    const toId = s.toUserId.toString();
-
-    let paid = 0;
-    let pending = 0;
-    const pendingList: TransferLite[] = [];
-    const confirmedList: TransferLite[] = [];
-
-    for (const t of transfers) {
-      const tFrom = t.fromUserId.toString();
-      const tTo = t.toUserId.toString();
-      const sameDir = tFrom === fromId && tTo === toId;
-      const oppDir = tFrom === toId && tTo === fromId;
-      if (!sameDir && !oppDir) continue;
-
-      const tlite: TransferLite = {
-        id: t._id.toString(),
-        fromUserId: tFrom,
-        toUserId: tTo,
-        amount: t.amount,
-        status: t.status,
-        note: t.note ?? "",
-        declaredAt: t.declaredAt,
-        resolvedAt: t.resolvedAt ?? null,
-      };
-
-      const signed = sameDir ? t.amount : -t.amount;
-      if (t.status === "confirmed") {
-        paid += signed;
-        confirmedList.push(tlite);
-      } else if (t.status === "pending") {
-        pending += signed;
-        pendingList.push(tlite);
-      }
-    }
-
-    return {
-      fromUserId: fromId,
-      toUserId: toId,
-      owedAmount: s.amount,
-      paidAmount: paid,
-      pendingAmount: pending,
-      outstandingAmount: Math.max(0, s.amount - paid),
-      settled: paid >= s.amount,
-      overpaid: paid > s.amount,
-      pendingTransfers: pendingList,
-      confirmedTransfers: confirmedList,
-    };
-  });
-}

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { filsToAed } from "@/lib/format/currency";
 import type { PerPayerRow, PerUserShareRow, PersonalSummary, RawExpense } from "@/lib/money/reports";
-import type { SettlementRow } from "@/lib/money/bills";
+import type { SettlementTransfer } from "@/lib/money/bills";
 import SettleUpPanel from "@/components/SettleUpPanel";
 
 const MONTH_NAMES = [
@@ -20,9 +20,7 @@ export default function MonthView({
   nextMonth,
   perPayer,
   perShare,
-  billId,
-  settlementRows,
-  currentUserId,
+  settlements,
 }: {
   year: number;
   month: number;
@@ -34,9 +32,7 @@ export default function MonthView({
   nextMonth: { y: number; m: number } | null;
   perPayer: PerPayerRow[];
   perShare: PerUserShareRow[];
-  billId: string;
-  settlementRows: SettlementRow[];
-  currentUserId: string;
+  settlements: SettlementTransfer[];
 }) {
   const userNameRecord = Object.fromEntries(userNameById);
   const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
@@ -128,12 +124,7 @@ export default function MonthView({
         </div>
       </section>
 
-      <SettleUpPanel
-        billId={billId}
-        rows={settlementRows}
-        currentUserId={currentUserId}
-        userNameById={userNameRecord}
-      />
+      <SettleUpPanel settlements={settlements} userNameById={userNameRecord} />
 
       <section className="rounded-2xl border border-border bg-surface">
         <header className="border-b border-border px-5 py-3 text-sm font-medium">All expenses</header>

@@ -1,16 +1,33 @@
 import { Types } from "mongoose";
 import { connectDb } from "@/lib/db/connect";
 import { MonthlyBill } from "@/lib/db/models/MonthlyBill";
-import { Transfer } from "@/lib/db/models/Transfer";
+import { Transfer, type TransferStatus } from "@/lib/db/models/Transfer";
 
-export type PerCounterpart = {
-  userId: string;
+export type TransferLite = {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
   amount: number;
+  status: TransferStatus;
+  note: string;
+  declaredAt: Date;
+  resolvedAt: Date | null;
+};
+
+export type CounterpartSummary = {
+  userId: string;
+  netOutstanding: number;
+  grossIOwe: number;
+  grossTheyOwe: number;
+  paidByMe: number;
+  paidByThem: number;
+  pending: TransferLite[];
 };
 
 export type OverallBalance = {
-  youOwe: { total: number; perCreditor: PerCounterpart[] };
-  owedToYou: { total: number; perDebtor: PerCounterpart[] };
+  youOwe: { total: number; perCreditor: CounterpartSummary[] };
+  owedToYou: { total: number; perDebtor: CounterpartSummary[] };
+  totalPaidByMe: number;
 };
 
 const pairKey = (from: string, to: string) => `${from}|${to}`;
@@ -21,11 +38,19 @@ export async function computeUserOverallBalance(
 ): Promise<OverallBalance> {
   await connectDb();
   const roomObjectId = new Types.ObjectId(roomId);
+  const userObjectId = new Types.ObjectId(userId);
 
-  const [bills, confirmed] = await Promise.all([
+  const [bills, confirmed, pending] = await Promise.all([
     MonthlyBill.find({ roomId: roomObjectId }).select("settlements").lean(),
     Transfer.find({ roomId: roomObjectId, status: "confirmed" })
       .select("fromUserId toUserId amount")
+      .lean(),
+    Transfer.find({
+      roomId: roomObjectId,
+      status: "pending",
+      $or: [{ fromUserId: userObjectId }, { toUserId: userObjectId }],
+    })
+      .select("fromUserId toUserId amount status note declaredAt resolvedAt")
       .lean(),
   ]);
 
@@ -43,43 +68,84 @@ export async function computeUserOverallBalance(
     paid.set(k, (paid.get(k) ?? 0) + t.amount);
   }
 
+  const pendingByCounterpart = new Map<string, TransferLite[]>();
+  for (const t of pending) {
+    const fromId = t.fromUserId.toString();
+    const toId = t.toUserId.toString();
+    const other = fromId === userId ? toId : fromId;
+    const lite: TransferLite = {
+      id: t._id.toString(),
+      fromUserId: fromId,
+      toUserId: toId,
+      amount: t.amount,
+      status: t.status,
+      note: t.note ?? "",
+      declaredAt: t.declaredAt,
+      resolvedAt: t.resolvedAt ?? null,
+    };
+    const list = pendingByCounterpart.get(other) ?? [];
+    list.push(lite);
+    pendingByCounterpart.set(other, list);
+  }
+
   const counterparts = new Set<string>();
   for (const k of owed.keys()) {
     const [from, to] = k.split("|");
     if (from === userId) counterparts.add(to);
     else if (to === userId) counterparts.add(from);
   }
+  for (const k of paid.keys()) {
+    const [from, to] = k.split("|");
+    if (from === userId) counterparts.add(to);
+    else if (to === userId) counterparts.add(from);
+  }
+  for (const other of pendingByCounterpart.keys()) counterparts.add(other);
 
-  const youOwe: PerCounterpart[] = [];
-  const owedToYou: PerCounterpart[] = [];
+  const youOwe: CounterpartSummary[] = [];
+  const owedToYou: CounterpartSummary[] = [];
+  let totalPaidByMe = 0;
 
   for (const other of counterparts) {
-    const owedFromMe = owed.get(pairKey(userId, other)) ?? 0;
-    const owedToMe = owed.get(pairKey(other, userId)) ?? 0;
+    const grossIOwe = owed.get(pairKey(userId, other)) ?? 0;
+    const grossTheyOwe = owed.get(pairKey(other, userId)) ?? 0;
     const paidByMe = paid.get(pairKey(userId, other)) ?? 0;
-    const paidToMe = paid.get(pairKey(other, userId)) ?? 0;
+    const paidByThem = paid.get(pairKey(other, userId)) ?? 0;
+    const netIOwe = grossIOwe - grossTheyOwe - paidByMe + paidByThem;
 
-    const netIOwe = owedFromMe - owedToMe - paidByMe + paidToMe;
+    totalPaidByMe += paidByMe;
+
+    const summary: CounterpartSummary = {
+      userId: other,
+      netOutstanding: netIOwe,
+      grossIOwe,
+      grossTheyOwe,
+      paidByMe,
+      paidByThem,
+      pending: pendingByCounterpart.get(other) ?? [],
+    };
 
     if (netIOwe > 0) {
-      youOwe.push({ userId: other, amount: netIOwe });
+      youOwe.push(summary);
     } else if (netIOwe < 0) {
-      owedToYou.push({ userId: other, amount: -netIOwe });
+      owedToYou.push({ ...summary, netOutstanding: -netIOwe });
+    } else if (summary.pending.length > 0 || paidByMe > 0 || paidByThem > 0) {
+      youOwe.push(summary);
     }
   }
 
-  youOwe.sort((a, b) => b.amount - a.amount);
-  owedToYou.sort((a, b) => b.amount - a.amount);
+  youOwe.sort((a, b) => b.netOutstanding - a.netOutstanding);
+  owedToYou.sort((a, b) => b.netOutstanding - a.netOutstanding);
 
   return {
     youOwe: {
-      total: youOwe.reduce((s, r) => s + r.amount, 0),
+      total: youOwe.reduce((s, r) => s + Math.max(0, r.netOutstanding), 0),
       perCreditor: youOwe,
     },
     owedToYou: {
-      total: owedToYou.reduce((s, r) => s + r.amount, 0),
+      total: owedToYou.reduce((s, r) => s + r.netOutstanding, 0),
       perDebtor: owedToYou,
     },
+    totalPaidByMe,
   };
 }
 

@@ -4,24 +4,23 @@ import { Types } from "mongoose";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { connectDb } from "@/lib/db/connect";
-import { MonthlyBill } from "@/lib/db/models/MonthlyBill";
 import { Transfer } from "@/lib/db/models/Transfer";
 import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
+import { getOrComputeBillView } from "@/lib/money/bills";
+import { currentYearMonth } from "@/lib/money/reports";
 
 const objectId = z.string().refine((v) => Types.ObjectId.isValid(v), { message: "invalid id" });
 
 export type TransferActionResult = { ok: true; id: string } | { ok: false; error: string };
 
 const recordSchema = z.object({
-  billId: objectId,
   toUserId: objectId,
   amount: z.number().int().min(1),
   note: z.string().trim().max(200).optional(),
 });
 
-export async function recordTransferAction(input: {
-  billId: string;
+export async function recordOverallTransferAction(input: {
   toUserId: string;
   amount: number;
   note?: string;
@@ -39,18 +38,18 @@ export async function recordTransferAction(input: {
   }
 
   await connectDb();
-  const bill = await MonthlyBill.findById(parsed.data.billId);
-  if (!bill) return { ok: false, error: "Bill not found" };
-  if (bill.roomId.toString() !== session.roomId) return { ok: false, error: "Forbidden" };
 
   const recipient = await User.findById(parsed.data.toUserId);
   if (!recipient || recipient.roomId?.toString() !== session.roomId) {
     return { ok: false, error: "Invalid recipient" };
   }
 
+  const { year, month } = currentYearMonth();
+  const bill = await getOrComputeBillView(session.roomId, year, month);
+
   const transfer = await Transfer.create({
-    roomId: bill.roomId,
-    billId: bill._id,
+    roomId: new Types.ObjectId(session.roomId),
+    billId: new Types.ObjectId(bill.id),
     fromUserId: new Types.ObjectId(session.sub),
     toUserId: new Types.ObjectId(parsed.data.toUserId),
     amount: parsed.data.amount,
