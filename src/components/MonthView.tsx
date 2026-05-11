@@ -21,6 +21,8 @@ export default function MonthView({
   perPayer,
   perShare,
   settlements,
+  viewedAs,
+  viewedUserName,
 }: {
   year: number;
   month: number;
@@ -33,10 +35,19 @@ export default function MonthView({
   perPayer: PerPayerRow[];
   perShare: PerUserShareRow[];
   settlements: SettlementTransfer[];
+  viewedAs?: string;
+  viewedUserName?: string;
 }) {
   const userNameRecord = Object.fromEntries(userNameById);
   const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
   const total = expenses.reduce((s, e) => s + e.amount, 0);
+  const monthHref = (y: number, m: number) => {
+    const p = new URLSearchParams();
+    p.set("y", String(y));
+    p.set("m", String(m));
+    if (viewedAs) p.set("as", viewedAs);
+    return `/dashboard?${p.toString()}`;
+  };
 
   return (
     <div className="flex flex-col gap-8">
@@ -46,18 +57,26 @@ export default function MonthView({
           <p className="text-sm text-muted">
             {expenses.length} expense{expenses.length === 1 ? "" : "s"} · total{" "}
             <span className="font-semibold text-foreground">{filsToAed(total)}</span>
+            {viewedUserName ? (
+              <>
+                {" · "}
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                  viewing as {viewedUserName}
+                </span>
+              </>
+            ) : null}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href={`/dashboard?y=${prevMonth.y}&m=${prevMonth.m}`}
+            href={monthHref(prevMonth.y, prevMonth.m)}
             className="rounded-md border border-border bg-surface-muted px-3 py-1.5 text-sm hover:bg-border"
           >
             ← Prev
           </Link>
           {nextMonth ? (
             <Link
-              href={`/dashboard?y=${nextMonth.y}&m=${nextMonth.m}`}
+              href={monthHref(nextMonth.y, nextMonth.m)}
               className="rounded-md border border-border bg-surface-muted px-3 py-1.5 text-sm hover:bg-border"
             >
               Next →

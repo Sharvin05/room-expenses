@@ -6,14 +6,14 @@ import { Group } from "@/lib/db/models/Group";
 import { requireUser } from "@/lib/auth/session";
 import { currentYearMonth, listExpenses } from "@/lib/money/reports";
 import { computeMonthBillView } from "@/lib/money/bills";
-import { computeUserOverallBalance, listUserTransfers } from "@/lib/money/overall";
 import MonthView from "@/components/MonthView";
-import OverallSummaryPanel from "@/components/OverallSummaryPanel";
+import UserSwitcher from "@/components/UserSwitcher";
+import GroupTotalsPanel, { type GroupTotalRow } from "@/components/GroupTotalsPanel";
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ y?: string; m?: string }>;
+  searchParams: Promise<{ y?: string; m?: string; as?: string }>;
 }) {
   const session = await requireUser();
   if (!session.roomId) redirect("/admin");
@@ -25,14 +25,18 @@ export default async function DashboardPage({
   const month = Number(sp.m) || now.month;
 
   const roomId = new Types.ObjectId(session.roomId);
-  const bill = await computeMonthBillView(session.roomId, year, month);
-  const [expenses, users, groups, overallBalance, recentTransfers] = await Promise.all([
+  const isAdmin = session.role === "owner" || session.role === "roomAdmin";
+
+  const [bill, expenses, users, groups] = await Promise.all([
+    computeMonthBillView(session.roomId, year, month),
     listExpenses(session.roomId, { year, month }),
     User.find({ roomId }).select("name").lean(),
     Group.find({ roomId }).select("name").lean(),
-    computeUserOverallBalance(session.roomId, session.sub),
-    listUserTransfers(session.roomId, session.sub, { limit: 5 }),
   ]);
+
+  const userIdSet = new Set(users.map((u) => u._id.toString()));
+  const viewedUserId =
+    isAdmin && sp.as && userIdSet.has(sp.as) ? sp.as : session.sub;
 
   const userNameById = new Map(users.map((u) => [u._id.toString(), u.name]));
   const groupNameById = new Map(groups.map((g) => [g._id.toString(), g.name]));
@@ -53,14 +57,29 @@ export default async function DashboardPage({
     .map((r) => ({ userId: r.userId, share: r.amount }))
     .sort((a, b) => b.share - a.share);
 
-  const mySpent = bill.perUserSpent.find((r) => r.userId === session.sub)?.amount ?? 0;
-  const myShare = bill.perUserShare.find((r) => r.userId === session.sub)?.amount ?? 0;
+  const viewedSpent = bill.perUserSpent.find((r) => r.userId === viewedUserId)?.amount ?? 0;
+  const viewedShare = bill.perUserShare.find((r) => r.userId === viewedUserId)?.amount ?? 0;
   const personalSummary = {
-    spent: mySpent,
-    share: myShare,
-    net: mySpent - myShare,
+    spent: viewedSpent,
+    share: viewedShare,
+    net: viewedSpent - viewedShare,
     count: bill.expenseCount,
   };
+
+  const perGroup = new Map<string, { total: number; count: number }>();
+  for (const e of expenses) {
+    const key = e.groupId ?? "__ungrouped__";
+    const cur = perGroup.get(key) ?? { total: 0, count: 0 };
+    cur.total += e.amount;
+    cur.count += 1;
+    perGroup.set(key, cur);
+  }
+  const groupTotals: GroupTotalRow[] = Array.from(perGroup, ([key, v]) => ({
+    groupId: key === "__ungrouped__" ? null : key,
+    name: key === "__ungrouped__" ? "Ungrouped" : groupNameById.get(key) ?? "Unknown group",
+    total: v.total,
+    count: v.count,
+  })).sort((a, b) => b.total - a.total);
 
   const prevMonth = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
   const isFutureOrCurrent = year > now.year || (year === now.year && month >= now.month);
@@ -70,18 +89,25 @@ export default async function DashboardPage({
       ? { y: year + 1, m: 1 }
       : { y: year, m: month + 1 };
 
-
-
-      //   <OverallSummaryPanel
-      //   balance={overallBalance}
-      //   recentTransfers={recentTransfers}
-      //   userNameById={userNameById}
-      //   currentUserId={session.sub}
-      // />
+  const isImpersonating = isAdmin && viewedUserId !== session.sub;
+  const viewedUserName = isImpersonating
+    ? userNameById.get(viewedUserId)
+    : undefined;
 
   return (
     <div className="flex flex-col gap-8">
-    
+      {isAdmin ? (
+        <UserSwitcher
+          users={users.map((u) => ({ id: u._id.toString(), name: u.name }))}
+          selfId={session.sub}
+          viewedUserId={viewedUserId}
+          year={year}
+          month={month}
+        />
+      ) : null}
+
+      <GroupTotalsPanel year={year} month={month} groupTotals={groupTotals} />
+
       <MonthView
         year={year}
         month={month}
@@ -94,6 +120,8 @@ export default async function DashboardPage({
         perPayer={perPayer}
         perShare={perShare}
         settlements={bill.settlements}
+        viewedAs={isImpersonating ? viewedUserId : undefined}
+        viewedUserName={viewedUserName}
       />
     </div>
   );
