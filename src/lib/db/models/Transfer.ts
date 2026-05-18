@@ -6,7 +6,8 @@ export type TransferStatus = (typeof TRANSFER_STATUSES)[number];
 const TransferSchema = new Schema(
   {
     roomId: { type: Schema.Types.ObjectId, ref: "Room", required: true, index: true },
-    billId: { type: Schema.Types.ObjectId, ref: "MonthlyBill", required: true, index: true },
+    year: { type: Number, required: true },
+    month: { type: Number, required: true, min: 1, max: 12 },
     fromUserId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     toUserId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     amount: { type: Number, required: true, min: 1 },
@@ -20,8 +21,8 @@ const TransferSchema = new Schema(
   { timestamps: true },
 );
 
-TransferSchema.index({ billId: 1, status: 1 });
-TransferSchema.index({ billId: 1, fromUserId: 1, toUserId: 1 });
+TransferSchema.index({ roomId: 1, year: 1, month: 1, status: 1 });
+TransferSchema.index({ roomId: 1, fromUserId: 1, toUserId: 1, status: 1 });
 
 export type TransferDoc = InferSchemaType<typeof TransferSchema> & { _id: Types.ObjectId };
 
