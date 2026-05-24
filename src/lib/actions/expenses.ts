@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { connectDb } from "@/lib/db/connect";
 import { Expense } from "@/lib/db/models/Expense";
-import { Group } from "@/lib/db/models/Group";
+import { Group, effectiveMembers } from "@/lib/db/models/Group";
 import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
 
@@ -46,6 +46,7 @@ async function resolveParticipants(
   data: ReturnType<typeof expenseSchema.parse>,
   roomId: string,
   payerObjectId: Types.ObjectId,
+  expenseDate: Date,
 ): Promise<{ ok: true; participantIds: Types.ObjectId[]; groupId: Types.ObjectId | null } | { ok: false; error: string }> {
   let participantIds: Types.ObjectId[] = [];
   let groupId: Types.ObjectId | null = null;
@@ -55,7 +56,13 @@ async function resolveParticipants(
     if (!group) return { ok: false, error: "Group not found" };
     if (group.roomId.toString() !== roomId) return { ok: false, error: "Forbidden" };
     groupId = group._id;
-    participantIds = [...group.memberIds];
+    // Only include members who had joined the group on/before this expense's date.
+    // This is what makes "members are only on expenses from their join date forward"
+    // hold for both new expenses and edits of historical ones.
+    const cutoff = expenseDate.getTime();
+    participantIds = effectiveMembers(group)
+      .filter((m) => m.joinedAt.getTime() <= cutoff)
+      .map((m) => m.userId);
   } else {
     participantIds = data.participantIds!.map((id) => new Types.ObjectId(id));
     const valid = await User.countDocuments({
@@ -97,12 +104,12 @@ export async function createExpenseAction(input: ExpenseInput): Promise<ExpenseR
 
   await connectDb();
 
-  const payerObjectId = new Types.ObjectId(session.sub);
-  const resolved = await resolveParticipants(parsed.data, session.roomId, payerObjectId);
-  if (!resolved.ok) return resolved;
-
   const date = new Date(parsed.data.date);
   if (Number.isNaN(date.getTime())) return { ok: false, error: "Invalid date" };
+
+  const payerObjectId = new Types.ObjectId(session.sub);
+  const resolved = await resolveParticipants(parsed.data, session.roomId, payerObjectId, date);
+  if (!resolved.ok) return resolved;
 
   const expense = await Expense.create({
     amount: parsed.data.amountFils,
@@ -142,11 +149,11 @@ export async function updateExpenseAction(
   const isAdmin = session.role === "owner" || session.role === "roomAdmin";
   if (!isPayer && !isAdmin) return { ok: false, error: "Forbidden" };
 
-  const resolved = await resolveParticipants(parsed.data, session.roomId, exp.payerId);
-  if (!resolved.ok) return resolved;
-
   const date = new Date(parsed.data.date);
   if (Number.isNaN(date.getTime())) return { ok: false, error: "Invalid date" };
+
+  const resolved = await resolveParticipants(parsed.data, session.roomId, exp.payerId, date);
+  if (!resolved.ok) return resolved;
 
   exp.amount = parsed.data.amountFils;
   exp.shopName = parsed.data.shopName;

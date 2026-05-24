@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { connectDb } from "@/lib/db/connect";
 import { Room } from "@/lib/db/models/Room";
-import { Group } from "@/lib/db/models/Group";
+import { Group, effectiveMembers } from "@/lib/db/models/Group";
 import { User, USER_ROLES } from "@/lib/db/models/User";
 import { Expense } from "@/lib/db/models/Expense";
 import { hashPassword } from "@/lib/auth/password";
@@ -132,7 +132,10 @@ export async function deleteUserAction(userId: string): Promise<ActionResult> {
   }
 
   await User.deleteOne({ _id: target._id });
-  await Group.updateMany({ memberIds: target._id }, { $pull: { memberIds: target._id } });
+  await Group.updateMany(
+    { $or: [{ memberIds: target._id }, { "members.userId": target._id }] },
+    { $pull: { memberIds: target._id, members: { userId: target._id } } },
+  );
   revalidatePath("/admin/users");
   revalidatePath("/admin/groups");
   return { ok: true };
@@ -167,10 +170,14 @@ export async function createGroupAction(
   const exists = await Group.findOne({ roomId: parsed.data.roomId, name: parsed.data.name });
   if (exists) return { ok: false, error: "Group already exists in this room" };
 
+  const now = new Date();
   const group = await Group.create({
     name: parsed.data.name,
     roomId: new Types.ObjectId(parsed.data.roomId),
-    memberIds: (parsed.data.memberIds ?? []).map((id) => new Types.ObjectId(id)),
+    members: (parsed.data.memberIds ?? []).map((id) => ({
+      userId: new Types.ObjectId(id),
+      joinedAt: now,
+    })),
   });
 
   if (parsed.data.memberIds?.length) {
@@ -201,8 +208,23 @@ export async function updateGroupMembersAction(
 
   await requireAdminForRoom(group.roomId.toString());
 
-  const oldIds = group.memberIds.map((id) => id.toString());
-  group.memberIds = memberIds.map((id) => new Types.ObjectId(id));
+  // Preserve joinedAt for members that were already in the group; stamp new
+  // members with today's date so they only appear on expenses dated on/after now.
+  const existing = effectiveMembers(group);
+  const existingByUserId = new Map(existing.map((m) => [m.userId.toString(), m]));
+  const oldIds = existing.map((m) => m.userId.toString());
+  const now = new Date();
+
+  const nextMembers = memberIds.map((id) => {
+    const prior = existingByUserId.get(id);
+    return {
+      userId: new Types.ObjectId(id),
+      joinedAt: prior ? prior.joinedAt : now,
+    };
+  });
+  group.set("members", nextMembers);
+  // Drop the legacy field so future reads use `members` directly.
+  group.set("memberIds", undefined);
   await group.save();
 
   const removed = oldIds.filter((id) => !memberIds.includes(id));

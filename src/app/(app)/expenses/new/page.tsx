@@ -1,11 +1,12 @@
 import { Types } from "mongoose";
 import { redirect } from "next/navigation";
 import { connectDb } from "@/lib/db/connect";
-import { Group } from "@/lib/db/models/Group";
+import { Group, effectiveMembers } from "@/lib/db/models/Group";
 import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
 import { currentYearMonth, listExpenses } from "@/lib/money/reports";
 import NewExpenseClient from "./NewExpenseClient";
+import { console } from "inspector";
 
 export default async function NewExpensePage({
   searchParams,
@@ -33,8 +34,9 @@ export default async function NewExpensePage({
   const groupsOut = groups.map((g) => ({
     id: g._id.toString(),
     name: g.name,
-    memberIds: g.memberIds.map((id) => id.toString()),
+    memberIds: effectiveMembers(g).map((m) => m.userId.toString()),
   }));
+  console.log("groupsOut", groupsOut);
   const usersOut = users.map((u) => ({ id: u._id.toString(), name: u.name }));
   const expensesOut = expenses.map((e) => ({
     id: e._id,
