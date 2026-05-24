@@ -17,6 +17,19 @@ const objectId = z
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+// Anything that mutates group membership has to evict the router cache for the
+// expense surfaces — they read groups for the picker and the per-expense
+// participant resolution. Without this, the new member won't appear on
+// /expenses/new until the cache happens to expire.
+function revalidateGroupSurfaces() {
+  revalidatePath("/admin/groups");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin");
+  revalidatePath("/dashboard");
+  revalidatePath("/expenses/new");
+  revalidatePath("/expenses/history");
+}
+
 const createRoomSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
@@ -102,18 +115,35 @@ export async function createUserAction(
   if (exists) return { ok: false, error: "Email already in use" };
 
   const passwordHash = await hashPassword(parsed.data.password);
-  await User.create({
+  const groupObjectIds = (parsed.data.groupIds ?? []).map((id) => new Types.ObjectId(id));
+  const userDoc = await User.create({
     email: parsed.data.email.toLowerCase(),
     name: parsed.data.name,
     passwordHash,
     role: parsed.data.role,
     roomId: new Types.ObjectId(roomId),
-    groupIds: (parsed.data.groupIds ?? []).map((id) => new Types.ObjectId(id)),
+    groupIds: groupObjectIds,
   });
 
-  revalidatePath("/admin/users");
-  revalidatePath("/admin/groups");
-  revalidatePath("/admin");
+  // Mirror the assignment onto each Group.members. We load → mutate → save so
+  // legacy groups (still on `memberIds`) get materialized into `members` with
+  // backfilled joinedAt, instead of being overwritten by a blind $push.
+  if (groupObjectIds.length) {
+    const now = new Date();
+    const groupsToUpdate = await Group.find({
+      _id: { $in: groupObjectIds },
+      roomId: new Types.ObjectId(roomId),
+    });
+    for (const g of groupsToUpdate) {
+      const current = effectiveMembers(g);
+      if (current.some((m) => m.userId.equals(userDoc._id))) continue;
+      g.set("members", [...current, { userId: userDoc._id, joinedAt: now }]);
+      g.set("memberIds", undefined);
+      await g.save();
+    }
+  }
+
+  revalidateGroupSurfaces();
   return { ok: true };
 }
 
@@ -136,8 +166,7 @@ export async function deleteUserAction(userId: string): Promise<ActionResult> {
     { $or: [{ memberIds: target._id }, { "members.userId": target._id }] },
     { $pull: { memberIds: target._id, members: { userId: target._id } } },
   );
-  revalidatePath("/admin/users");
-  revalidatePath("/admin/groups");
+  revalidateGroupSurfaces();
   return { ok: true };
 }
 
@@ -187,9 +216,7 @@ export async function createGroupAction(
     );
   }
 
-  revalidatePath("/admin/groups");
-  revalidatePath("/admin/users");
-  revalidatePath("/admin");
+  revalidateGroupSurfaces();
   return { ok: true };
 }
 
@@ -242,8 +269,7 @@ export async function updateGroupMembersAction(
     );
   }
 
-  revalidatePath("/admin/groups");
-  revalidatePath("/admin/users");
+  revalidateGroupSurfaces();
   return { ok: true };
 }
 
@@ -257,7 +283,6 @@ export async function deleteGroupAction(groupId: string): Promise<ActionResult> 
 
   await User.updateMany({ groupIds: group._id }, { $pull: { groupIds: group._id } });
   await Group.deleteOne({ _id: group._id });
-  revalidatePath("/admin/groups");
-  revalidatePath("/admin/users");
+  revalidateGroupSurfaces();
   return { ok: true };
 }

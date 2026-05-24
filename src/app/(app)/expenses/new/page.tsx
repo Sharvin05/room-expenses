@@ -6,7 +6,6 @@ import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
 import { currentYearMonth, listExpenses } from "@/lib/money/reports";
 import NewExpenseClient from "./NewExpenseClient";
-import { console } from "inspector";
 
 export default async function NewExpensePage({
   searchParams,
