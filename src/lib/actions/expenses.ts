@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { connectDb } from "@/lib/db/connect";
 import { Expense } from "@/lib/db/models/Expense";
-import { Group, effectiveMembers } from "@/lib/db/models/Group";
+import { Group, effectiveMembers, isMemberOn } from "@/lib/db/models/Group";
 import { User } from "@/lib/db/models/User";
 import { requireUser } from "@/lib/auth/session";
 
@@ -56,12 +56,12 @@ async function resolveParticipants(
     if (!group) return { ok: false, error: "Group not found" };
     if (group.roomId.toString() !== roomId) return { ok: false, error: "Forbidden" };
     groupId = group._id;
-    // Only include members who had joined the group on/before this expense's date.
-    // This is what makes "members are only on expenses from their join date forward"
-    // hold for both new expenses and edits of historical ones.
-    const cutoff = expenseDate.getTime();
+    // Only include members whose membership covered this expense's date. Because
+    // membership is stored as intervals, a back-dated entry — or an edit to an
+    // old expense made after someone left — still resolves to who was actually
+    // in the group that day, rather than to who is in it right now.
     participantIds = effectiveMembers(group)
-      .filter((m) => m.joinedAt.getTime() <= cutoff)
+      .filter((m) => isMemberOn(m, expenseDate))
       .map((m) => m.userId);
   } else {
     participantIds = data.participantIds!.map((id) => new Types.ObjectId(id));

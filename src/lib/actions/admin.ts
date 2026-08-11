@@ -5,7 +5,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { connectDb } from "@/lib/db/connect";
 import { Room } from "@/lib/db/models/Room";
-import { Group, effectiveMembers } from "@/lib/db/models/Group";
+import {
+  Group,
+  effectiveMembers,
+  isCurrentMember,
+  membershipDayStamp,
+  withMemberJoined,
+  withMemberLeft,
+} from "@/lib/db/models/Group";
 import { User, USER_ROLES } from "@/lib/db/models/User";
 import { Expense } from "@/lib/db/models/Expense";
 import { hashPassword } from "@/lib/auth/password";
@@ -127,17 +134,15 @@ export async function createUserAction(
 
   // Mirror the assignment onto each Group.members. We load → mutate → save so
   // legacy groups (still on `memberIds`) get materialized into `members` with
-  // backfilled joinedAt, instead of being overwritten by a blind $push.
+  // backfilled periods, instead of being overwritten by a blind $push.
   if (groupObjectIds.length) {
-    const now = new Date();
+    const stamp = membershipDayStamp();
     const groupsToUpdate = await Group.find({
       _id: { $in: groupObjectIds },
       roomId: new Types.ObjectId(roomId),
     });
     for (const g of groupsToUpdate) {
-      const current = effectiveMembers(g);
-      if (current.some((m) => m.userId.equals(userDoc._id))) continue;
-      g.set("members", [...current, { userId: userDoc._id, joinedAt: now }]);
+      g.set("members", withMemberJoined(effectiveMembers(g), userDoc._id, stamp));
       g.set("memberIds", undefined);
       await g.save();
     }
@@ -162,10 +167,18 @@ export async function deleteUserAction(userId: string): Promise<ActionResult> {
   }
 
   await User.deleteOne({ _id: target._id });
-  await Group.updateMany(
-    { $or: [{ memberIds: target._id }, { "members.userId": target._id }] },
-    { $pull: { memberIds: target._id, members: { userId: target._id } } },
-  );
+  // Close their membership rather than erasing it. Their expenses outlive the
+  // account, so an edit to one of those still has to resolve the participants
+  // who were in the group at the time.
+  const stamp = membershipDayStamp();
+  const affected = await Group.find({
+    $or: [{ memberIds: target._id }, { "members.userId": target._id }],
+  });
+  for (const g of affected) {
+    g.set("members", withMemberLeft(effectiveMembers(g), target._id, stamp));
+    g.set("memberIds", undefined);
+    await g.save();
+  }
   revalidateGroupSurfaces();
   return { ok: true };
 }
@@ -199,13 +212,13 @@ export async function createGroupAction(
   const exists = await Group.findOne({ roomId: parsed.data.roomId, name: parsed.data.name });
   if (exists) return { ok: false, error: "Group already exists in this room" };
 
-  const now = new Date();
+  const stamp = membershipDayStamp();
   const group = await Group.create({
     name: parsed.data.name,
     roomId: new Types.ObjectId(parsed.data.roomId),
     members: (parsed.data.memberIds ?? []).map((id) => ({
       userId: new Types.ObjectId(id),
-      joinedAt: now,
+      periods: [{ joinedAt: stamp, leftAt: null }],
     })),
   });
 
@@ -235,27 +248,29 @@ export async function updateGroupMembersAction(
 
   await requireAdminForRoom(group.roomId.toString());
 
-  // Preserve joinedAt for members that were already in the group; stamp new
-  // members with today's date so they only appear on expenses dated on/after now.
+  // `memberIds` is the roster as it should stand from today onward, so diff it
+  // against who is in the group now: anyone dropped gets their period closed as
+  // of today, anyone added gets a new one opened. Past periods are carried
+  // through untouched — that is what keeps a mid-month removal from rewriting
+  // the days the member was actually there.
   const existing = effectiveMembers(group);
-  const existingByUserId = new Map(existing.map((m) => [m.userId.toString(), m]));
-  const oldIds = existing.map((m) => m.userId.toString());
-  const now = new Date();
+  const oldIds = existing.filter(isCurrentMember).map((m) => m.userId.toString());
+  const stamp = membershipDayStamp();
 
-  const nextMembers = memberIds.map((id) => {
-    const prior = existingByUserId.get(id);
-    return {
-      userId: new Types.ObjectId(id),
-      joinedAt: prior ? prior.joinedAt : now,
-    };
-  });
+  const removed = oldIds.filter((id) => !memberIds.includes(id));
+  const added = memberIds.filter((id) => !oldIds.includes(id));
+
+  let nextMembers = existing;
+  for (const id of removed) {
+    nextMembers = withMemberLeft(nextMembers, new Types.ObjectId(id), stamp);
+  }
+  for (const id of added) {
+    nextMembers = withMemberJoined(nextMembers, new Types.ObjectId(id), stamp);
+  }
   group.set("members", nextMembers);
   // Drop the legacy field so future reads use `members` directly.
   group.set("memberIds", undefined);
   await group.save();
-
-  const removed = oldIds.filter((id) => !memberIds.includes(id));
-  const added = memberIds.filter((id) => !oldIds.includes(id));
   if (removed.length) {
     await User.updateMany(
       { _id: { $in: removed.map((id) => new Types.ObjectId(id)) } },

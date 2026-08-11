@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import { connectDb } from "@/lib/db/connect";
 import { Room } from "@/lib/db/models/Room";
-import { Group, effectiveMembers } from "@/lib/db/models/Group";
+import { Group, currentMemberIds } from "@/lib/db/models/Group";
 import { User } from "@/lib/db/models/User";
 import { requireAdmin } from "@/lib/auth/session";
 import GroupsClient from "./GroupsClient";
@@ -29,7 +29,7 @@ export default async function GroupsPage() {
         id: g._id.toString(),
         name: g.name,
         roomId: g.roomId.toString(),
-        memberIds: effectiveMembers(g).map((m) => m.userId.toString()),
+        memberIds: currentMemberIds(g),
       }))}
       users={users.map((u) => ({
         id: u._id.toString(),
